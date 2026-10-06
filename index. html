@@ -5,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI가 추천해주는 식단 메뉴</title>
 
-    <!--
-        ★ 여기만 수정하세요: YOUR_NCP_KEY_ID → 네이버 클라우드 플랫폼 Maps Client ID
-        (콘솔 > Maps > Web 서비스 URL 에 https://내아이디.github.io 를 등록해야 합니다)
-    -->
-    <script src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=YOUR_NCP_KEY_ID&submodules=geocoder"></script>
+    <!-- 지도 라이브러리 (Leaflet): API 키/로그인 필요 없음 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
@@ -70,19 +68,17 @@
         .card.open .card-map-area { display: block; }
         .map-status { font-size: .85rem; color: #64748b; background-color: #f8fafc; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; line-height: 1.45; }
         .map-status.error { background-color: #fef2f2; color: #b91c1c; }
-        .map-canvas { width: 100%; height: 260px; border-radius: 14px; border: 1px solid #e2e8f0; overflow: hidden; background-color: #e2e8f0; }
+        .map-canvas { width: 100%; height: 260px; border-radius: 14px; border: 1px solid #e2e8f0; overflow: hidden; background-color: #e2e8f0; z-index: 0; }
         .place-list { list-style: none; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
         .place-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
         .place-item:hover { background-color: #eef2ff; border-color: #c7d2fe; }
         .place-name { font-size: .9rem; font-weight: 700; color: #0f172a; }
         .place-sub { font-size: .75rem; color: #64748b; margin-top: 2px; }
         .place-dist { font-size: .75rem; font-weight: 700; color: #4f46e5; white-space: nowrap; }
-        .map-link { display: inline-block; margin-top: 10px; font-size: .82rem; font-weight: 600; color: #4f46e5; text-decoration: none; }
-        .map-link:hover { text-decoration: underline; }
-        .map-credit { margin-top: 6px; font-size: .7rem; color: #94a3b8; }
-        .my-marker { width: 16px; height: 16px; background-color: #2563eb; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 0 4px rgba(37,99,235,.25); }
-        .info-window { padding: 10px 12px; font-size: .82rem; line-height: 1.45; min-width: 160px; }
-        .info-window a { color: #4f46e5; font-weight: 600; text-decoration: none; }
+        .naver-btn { display: block; margin-top: 12px; padding: 12px; text-align: center; background-color: #03c75a; color: #fff; font-size: .9rem; font-weight: 700; border-radius: 10px; text-decoration: none; }
+        .naver-btn:hover { background-color: #02b350; }
+        .map-credit { margin-top: 6px; font-size: .7rem; color: #94a3b8; text-align: center; }
+        .popup a { color: #03a94d; font-weight: 700; text-decoration: none; }
 
         .loading-spinner { border: 4px solid #f3f3f3; border-top: 4px solid #4f46e5; border-radius: 50%; width: 44px; height: 44px; animation: spin .8s linear infinite; margin: 36px auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -133,7 +129,7 @@
         <div id="result-screen" class="screen">
             <h1 id="result-title">🍴 추천 메뉴</h1>
             <div id="badge-container" class="badge-list"></div>
-            <p class="map-hint">💡 메뉴를 누르면 근처 식당이 지도로 나와요</p>
+            <p class="map-hint">💡 메뉴를 누르면 강남구청 주변 식당이 지도로 나와요</p>
 
             <div id="loading" class="loading-spinner"></div>
             <div id="recommendation-list" class="card-list" style="display: none;"></div>
@@ -186,8 +182,11 @@
 
         const ALLERGEN_OPTIONS = ["계란", "우유", "밀", "대두", "돼지고기", "닭고기", "소고기", "해산물", "견과류", "땅콩"];
 
+        // 검색 기준 위치: 강남구청
+        const CENTER = { name: "강남구청", lat: 37.5172, lng: 127.0473 };
+
         // 메뉴별 식당 검색 설정
-        //  keyword : 네이버 지도 검색 링크용 검색어
+        //  keyword : 네이버 지도 검색용 검색어
         //  names   : 식당 이름에 포함될 단어 (정규식, | 로 구분)
         //  cuisine : OpenStreetMap 요리 종류 태그 (선택)
         const SEARCH_CONFIG = {
@@ -219,7 +218,6 @@
             309: { keyword: "파스타",       names: "파스타|스파게티|이탈리",        cuisine: "italian|pasta" }
         };
 
-        const DEFAULT_POS = { lat: 37.5665, lng: 126.9780 }; // 서울시청 (위치 권한 거부 시)
         const OVERPASS_ENDPOINTS = [
             "https://overpass-api.de/api/interpreter",
             "https://overpass.kumi.systems/api/interpreter"
@@ -230,17 +228,10 @@
         let isVegetarianMode = false;
         let selectedMealTime = 'lunch';
         let currentMenuIds = new Set();
-        let cachedUserPos = null;
         let openedCard = null;
+        let currentLeafletMap = null;
 
         window.onload = function () { renderAllergyTags(); };
-
-        window.navermap_authFailure = function () {
-            document.querySelectorAll('.map-status').forEach(el => {
-                el.classList.add('error');
-                el.innerText = '⚠️ 네이버 지도 인증 실패: Client ID와 Web 서비스 URL(https://내아이디.github.io) 등록을 확인해 주세요.';
-            });
-        };
 
         /* ===================== 기존 기능 ===================== */
         function renderAllergyTags() {
@@ -332,6 +323,7 @@
         function renderCards(menus) {
             const container = document.getElementById('recommendation-list');
             container.innerHTML = '';
+            destroyMap();
             openedCard = null;
 
             if (menus.length === 0) {
@@ -351,7 +343,7 @@
                                 <span class="card-meta">${menu.category} · ${menu.calories}</span>
                             </div>
                             <div class="card-desc">${menu.desc}</div>
-                            <div class="card-action">📍 근처 식당 지도 보기</div>
+                            <div class="card-action">📍 강남구청 주변 식당 보기</div>
                         </div>
                     </div>
                     <div class="card-map-area"></div>
@@ -361,7 +353,11 @@
             });
         }
 
-        /* ===================== 네이버 지도 연동 ===================== */
+        /* ===================== 지도 (강남구청 주변, API 키 없음) ===================== */
+        function destroyMap() {
+            if (currentLeafletMap) { currentLeafletMap.remove(); currentLeafletMap = null; }
+        }
+
         function toggleCardMap(card, menu) {
             if (card.classList.contains('open')) { closeCard(card); openedCard = null; return; }
             if (openedCard) closeCard(openedCard);
@@ -373,8 +369,9 @@
         }
 
         function closeCard(card) {
+            destroyMap();
             card.classList.remove('open');
-            card.querySelector('.card-action').innerText = '📍 근처 식당 지도 보기';
+            card.querySelector('.card-action').innerText = '📍 강남구청 주변 식당 보기';
             card.querySelector('.card-map-area').innerHTML = '';
         }
 
@@ -383,40 +380,10 @@
             return mapArea.isConnected && card && card.classList.contains('open');
         }
 
-        function getUserPosition() {
-            return new Promise(resolve => {
-                if (cachedUserPos) return resolve(cachedUserPos);
-                if (!navigator.geolocation) return resolve({ ...DEFAULT_POS, isDefault: true });
-                navigator.geolocation.getCurrentPosition(
-                    p => { cachedUserPos = { lat: p.coords.latitude, lng: p.coords.longitude, isDefault: false }; resolve(cachedUserPos); },
-                    () => resolve({ ...DEFAULT_POS, isDefault: true }),
-                    { timeout: 8000, maximumAge: 60000 }
-                );
-            });
-        }
-
-        // 좌표 → "구 동" (네이버 지도 검색 링크용)
-        function getAreaName(pos) {
-            return new Promise(resolve => {
-                if (!window.naver || !naver.maps || !naver.maps.Service) return resolve('');
-                naver.maps.Service.reverseGeocode({
-                    coords: new naver.maps.LatLng(pos.lat, pos.lng),
-                    orders: [naver.maps.Service.OrderType.ADDR, naver.maps.Service.OrderType.ROAD_ADDR].join(',')
-                }, (status, response) => {
-                    if (status !== naver.maps.Service.Status.OK) return resolve('');
-                    try {
-                        const r = response.v2.results[0].region;
-                        resolve(`${r.area2.name} ${r.area3.name}`.trim());
-                    } catch (e) { resolve(''); }
-                });
-            });
-        }
-
-        // OpenStreetMap(Overpass)에서 주변 식당 검색
-        async function fetchOverpass(pos, cfg, radius) {
+        async function fetchOverpass(cfg, radius) {
             const types = '["amenity"~"restaurant|cafe|fast_food"]';
-            let parts = `nwr(around:${radius},${pos.lat},${pos.lng})${types}["name"~"${cfg.names}"];`;
-            if (cfg.cuisine) parts += `nwr(around:${radius},${pos.lat},${pos.lng})${types}["cuisine"~"${cfg.cuisine}"];`;
+            let parts = `nwr(around:${radius},${CENTER.lat},${CENTER.lng})${types}["name"~"${cfg.names}"];`;
+            if (cfg.cuisine) parts += `nwr(around:${radius},${CENTER.lat},${CENTER.lng})${types}["cuisine"~"${cfg.cuisine}"];`;
             const query = `[out:json][timeout:20];(${parts});out center 40;`;
 
             let lastErr;
@@ -434,14 +401,14 @@
             throw lastErr;
         }
 
-        function elementToPlace(el, pos) {
+        function elementToPlace(el) {
             const lat = el.lat ?? (el.center && el.center.lat);
             const lng = el.lon ?? (el.center && el.center.lon);
             const t = el.tags || {};
             const name = t['name:ko'] || t.name;
             if (lat == null || lng == null || !name) return null;
-            const addr = [t['addr:city'], t['addr:district'], t['addr:street'], t['addr:housenumber']].filter(Boolean).join(' ');
-            return { name, address: addr, cuisine: t.cuisine || '', lat, lng, dist: distanceMeters(pos.lat, pos.lng, lat, lng) };
+            const addr = [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(' ');
+            return { name, address: addr, lat, lng, dist: distanceMeters(CENTER.lat, CENTER.lng, lat, lng) };
         }
 
         function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -451,88 +418,58 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
         const formatDistance = m => m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`;
-        const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const escapeHtml = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const naverSearchUrl = q => `https://map.naver.com/p/search/${encodeURIComponent(q)}`;
 
         async function showRestaurantMap(menu, mapArea) {
+            const cfg = SEARCH_CONFIG[menu.id] || { keyword: menu.name, names: menu.name, cuisine: '' };
+            const naverQuery = `${CENTER.name} ${cfg.keyword}`;
+
             mapArea.innerHTML = `
-                <div class="map-status">📍 내 위치를 확인하는 중...</div>
+                <div class="map-status">🔎 ${CENTER.name} 주변 '${escapeHtml(cfg.keyword)}' 식당을 찾는 중...</div>
                 <div class="map-canvas"></div>
                 <ul class="place-list"></ul>
-                <div class="map-extra"></div>
+                <a class="naver-btn" href="${naverSearchUrl(naverQuery)}" target="_blank" rel="noopener">🟢 네이버 지도에서 '${escapeHtml(naverQuery)}' 검색 ↗</a>
+                <div class="map-credit">지도 © OpenStreetMap contributors · 식당 정보 OpenStreetMap</div>
             `;
             const status = mapArea.querySelector('.map-status');
             const canvas = mapArea.querySelector('.map-canvas');
             const listEl = mapArea.querySelector('.place-list');
-            const extra = mapArea.querySelector('.map-extra');
-            const cfg = SEARCH_CONFIG[menu.id] || { keyword: menu.name, names: menu.name, cuisine: '' };
 
-            if (!window.naver || !naver.maps) {
-                status.classList.add('error');
-                status.innerText = '⚠️ 네이버 지도를 불러오지 못했습니다. index.html 상단의 Client ID(ncpKeyId)를 확인해 주세요.';
-                canvas.style.display = 'none';
-                return;
-            }
+            destroyMap();
+            const map = L.map(canvas, { scrollWheelZoom: false }).setView([CENTER.lat, CENTER.lng], 16);
+            currentLeafletMap = map;
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
 
-            const pos = await getUserPosition();
-            if (!isStillOpen(mapArea)) return;
-
-            const myLatLng = new naver.maps.LatLng(pos.lat, pos.lng);
-            const map = new naver.maps.Map(canvas, { center: myLatLng, zoom: 15 });
-            new naver.maps.Marker({
-                position: myLatLng, map, title: '내 위치',
-                icon: { content: '<div class="my-marker"></div>', anchor: new naver.maps.Point(11, 11) }
-            });
-
-            status.innerText = pos.isDefault
-                ? '📍 현재 위치를 가져올 수 없어 서울시청 주변을 보여드려요. (브라우저 위치 권한을 허용해 보세요) 식당을 찾는 중...'
-                : `🔎 근처 '${cfg.keyword}' 식당을 찾는 중...`;
-
-            // 네이버 지도에서 직접 검색하는 링크 (검색 결과가 부족할 때 대비, 항상 표시)
-            getAreaName(pos).then(area => {
-                if (!isStillOpen(mapArea)) return;
-                const q = encodeURIComponent(`${area} ${cfg.keyword}`.trim());
-                extra.innerHTML = `
-                    <a class="map-link" href="https://map.naver.com/p/search/${q}" target="_blank" rel="noopener">🔍 네이버 지도에서 '${escapeHtml(cfg.keyword)}' 더 찾아보기 ↗</a>
-                    <div class="map-credit">식당 정보 © OpenStreetMap contributors</div>
-                `;
-            });
+            // 강남구청 표시
+            L.circleMarker([CENTER.lat, CENTER.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#2563eb', fillOpacity: 1 })
+                .addTo(map).bindTooltip(CENTER.name, { permanent: true, direction: 'top', offset: [0, -8] });
 
             try {
-                let elements = await fetchOverpass(pos, cfg, 1500);
-                if (elements.length === 0) elements = await fetchOverpass(pos, cfg, 3000); // 반경 확대
+                let elements = await fetchOverpass(cfg, 1000);
+                if (elements.length === 0) elements = await fetchOverpass(cfg, 2000); // 반경 확대
                 if (!isStillOpen(mapArea)) return;
 
-                // 중복 제거 후 가까운 순 정렬
                 const seen = new Set();
-                const places = elements.map(e => elementToPlace(e, pos)).filter(Boolean)
+                const places = elements.map(elementToPlace).filter(Boolean)
                     .sort((a, b) => a.dist - b.dist)
                     .filter(p => { const k = p.name + Math.round(p.lat * 1e4); if (seen.has(k)) return false; seen.add(k); return true; })
                     .slice(0, 8);
 
                 if (places.length === 0) {
-                    status.innerText = `😢 근처에서 '${cfg.keyword}' 식당 정보를 찾지 못했어요. 아래 링크로 네이버 지도에서 직접 검색해 보세요.`;
+                    status.innerText = `😢 ${CENTER.name} 주변에서 '${cfg.keyword}' 식당 정보를 찾지 못했어요. 아래 버튼으로 네이버 지도에서 검색해 보세요.`;
                     return;
                 }
 
-                const bounds = new naver.maps.LatLngBounds(myLatLng, myLatLng);
-                const infoWindow = new naver.maps.InfoWindow({ borderWidth: 1, anchorSize: new naver.maps.Size(10, 10) });
-
-                const openInfo = (place, marker) => {
-                    const link = `https://map.naver.com/p/search/${encodeURIComponent(place.name)}`;
-                    infoWindow.setContent(`
-                        <div class="info-window">
+                const group = L.featureGroup([L.marker([CENTER.lat, CENTER.lng])]);
+                places.forEach((place, i) => {
+                    const marker = L.marker([place.lat, place.lng]).addTo(map).bindPopup(`
+                        <div class="popup">
                             <strong>${escapeHtml(place.name)}</strong><br>
                             ${place.address ? escapeHtml(place.address) + '<br>' : ''}
-                            <a href="${link}" target="_blank" rel="noopener">네이버 지도에서 보기 ↗</a>
+                            <a href="${naverSearchUrl(CENTER.name + ' ' + place.name)}" target="_blank" rel="noopener">네이버 지도에서 보기 ↗</a>
                         </div>`);
-                    infoWindow.open(map, marker);
-                };
-
-                places.forEach((place, i) => {
-                    const latlng = new naver.maps.LatLng(place.lat, place.lng);
-                    const marker = new naver.maps.Marker({ position: latlng, map, title: place.name });
-                    bounds.extend(latlng);
-                    naver.maps.Event.addListener(marker, 'click', () => openInfo(place, marker));
+                    group.addLayer(marker);
 
                     const li = document.createElement('li');
                     li.className = 'place-item';
@@ -542,16 +479,16 @@
                             ${place.address ? `<div class="place-sub">${escapeHtml(place.address)}</div>` : ''}
                         </div>
                         <div class="place-dist">${formatDistance(place.dist)}</div>`;
-                    li.addEventListener('click', () => { map.panTo(latlng); openInfo(place, marker); });
+                    li.addEventListener('click', () => { map.setView([place.lat, place.lng], 17); marker.openPopup(); });
                     listEl.appendChild(li);
                 });
 
-                map.fitBounds(bounds, { top: 30, right: 30, bottom: 30, left: 30 });
-                status.innerText = `✅ ${pos.isDefault ? '서울시청 주변 ' : '근처 '}'${cfg.keyword}' 식당 ${places.length}곳 (가까운 순)`;
+                map.fitBounds(group.getBounds(), { padding: [30, 30], maxZoom: 17 });
+                status.innerText = `✅ ${CENTER.name} 주변 '${cfg.keyword}' 식당 ${places.length}곳 (가까운 순)`;
             } catch (err) {
                 console.error(err);
                 status.classList.add('error');
-                status.innerText = '⚠️ 식당 정보를 불러오지 못했어요. 잠시 후 다시 시도하거나 아래 링크로 네이버 지도에서 직접 검색해 보세요.';
+                status.innerText = '⚠️ 식당 정보를 불러오지 못했어요. 잠시 후 다시 시도하거나 아래 버튼으로 네이버 지도에서 검색해 보세요.';
             }
         }
     </script>
